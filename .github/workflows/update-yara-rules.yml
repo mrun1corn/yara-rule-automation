@@ -1,0 +1,67 @@
+name: Update YARA Rules
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-yara-rules:
+    name: Build categorized YARA rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Show input files
+        run: |
+          echo "Repositories:"
+          sed 's/^/  /' repos.txt
+          echo
+          echo "Categories:"
+          sed 's/^/  /' category.txt
+
+      - name: Generate categorized YARA rules
+        run: python yara_rule_automation.py
+
+      - name: Write workflow summary
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          data = json.loads(Path("yara_rule_index.json").read_text(encoding="utf-8"))
+          category_counts = {
+              category: len(entries)
+              for category, entries in sorted(data["categories"].items())
+              if entries
+          }
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("# YARA Rule Update\n\n")
+              summary.write(f"- Repositories processed: {data['repo_count']}\n")
+              summary.write(f"- Errors: {len(data['errors'])}\n")
+              summary.write(f"- Category matches: {sum(category_counts.values())}\n")
+              summary.write(f"- Duplicate YARA files: {len(data['duplicates'])}\n")
+              summary.write(f"- Unmatched YARA files: {len(data['_unmatched'])}\n")
+              summary.write(f"- Validation: {data['validation']['note']}\n\n")
+              summary.write("## Category Counts\n\n")
+              for category, count in category_counts.items():
+                  summary.write(f"- `{category}`: {count}\n")
+          PY
+
+      - name: Upload generated rules artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yara-rules-output
+          path: |
+            yara-rules/
+            yara_rule_index.json
+          if-no-files-found: error
+          retention-days: 14

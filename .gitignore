@@ -1,0 +1,28 @@
+# Generated clone/cache directories
+repos/*
+!repos/.gitkeep
+vendor/
+
+# Generated YARA outputs
+yara-rules/categories/*
+!yara-rules/.gitkeep
+!yara-rules/categories/
+!yara-rules/categories/.gitkeep
+yara_rule_index.json
+*.log
+*.tmp
+*.bak
+
+# Python/runtime noise
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
