@@ -141,6 +141,21 @@ def run_git(args: list[str], cwd: Path | None = None, verbose: bool = False) -> 
         raise RuntimeError(f"{' '.join(command)} failed: {detail}")
 
 
+def git_output(args: list[str], cwd: Path) -> str:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return completed.stdout.strip()
+
+
 def clone_or_update_repo(repo_url: str, repo_dir: Path, skip_pull: bool, verbose: bool) -> dict:
     owner, repo_name, canonical_url = parse_github_repo(repo_url)
     repo_id = f"{owner}/{repo_name}"
@@ -153,23 +168,33 @@ def clone_or_update_repo(repo_url: str, repo_dir: Path, skip_pull: bool, verbose
                 "source_url": canonical_url,
                 "path": str(local_path),
                 "status": "error",
+                "changed": True,
                 "error": "local path exists but is not a git repository",
             }
+        before_head = git_output(["rev-parse", "HEAD"], cwd=local_path)
         if skip_pull:
             status = "skipped"
         else:
             run_git(["pull", "--ff-only"], cwd=local_path, verbose=verbose)
             status = "updated"
+        after_head = git_output(["rev-parse", "HEAD"], cwd=local_path)
+        changed = before_head != after_head
     else:
         local_path.parent.mkdir(parents=True, exist_ok=True)
         run_git(["clone", canonical_url, str(local_path)], verbose=verbose)
         status = "cloned"
+        before_head = None
+        after_head = git_output(["rev-parse", "HEAD"], cwd=local_path)
+        changed = True
 
     return {
         "repo": repo_id,
         "source_url": canonical_url,
         "path": str(local_path),
         "status": status,
+        "before_head": before_head,
+        "after_head": after_head,
+        "changed": changed,
     }
 
 
@@ -251,12 +276,139 @@ def classify_file(file_path: Path, repo_path: Path, category_terms: dict[str, li
     return matches
 
 
-def copy_rule_file(source_path: Path, destination_path: Path) -> None:
+def load_previous_index(index_path: Path) -> dict:
+    if not index_path.exists():
+        return {}
+
+    try:
+        return json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def load_previous_copied_hashes(previous_index: dict) -> dict[str, str]:
+    copied_hashes = {}
+    for entries in previous_index.get("categories", {}).values():
+        for entry in entries:
+            copied_path = entry.get("copied_path")
+            sha256 = entry.get("sha256")
+            if copied_path and sha256:
+                copied_hashes[str(Path(copied_path))] = sha256
+    return copied_hashes
+
+
+def previous_index_matches_categories(previous_index: dict, categories: list[str]) -> bool:
+    previous_categories = previous_index.get("categories")
+    return isinstance(previous_categories, dict) and set(previous_categories) == set(categories)
+
+
+def entries_for_repo(previous_index: dict, repo: str) -> dict:
+    categories = {
+        category: [
+            dict(entry)
+            for entry in entries
+            if entry.get("repo") == repo
+        ]
+        for category, entries in previous_index.get("categories", {}).items()
+    }
+    categories = {category: entries for category, entries in categories.items() if entries}
+    unmatched = [
+        dict(entry)
+        for entry in previous_index.get("_unmatched", [])
+        if entry.get("repo") == repo
+    ]
+    duplicates = [
+        dict(entry)
+        for entry in previous_index.get("duplicates", [])
+        if entry.get("repo") == repo
+    ]
+    return {
+        "categories": categories,
+        "unmatched": unmatched,
+        "duplicates": duplicates,
+    }
+
+
+def reuse_previous_repo_entries(
+    output: dict,
+    repo_info: dict,
+    previous_entries: dict,
+    copied_paths: set[Path],
+    seen_hashes: dict,
+    validate_rules: bool,
+) -> None:
+    unique_files = {}
+    repo_match_count = 0
+
+    for category, entries in previous_entries["categories"].items():
+        for entry in entries:
+            entry["repo_status"] = repo_info.get("status")
+            entry["repo_changed"] = False
+            output["categories"].setdefault(category, []).append(entry)
+            repo_match_count += 1
+            if entry.get("copied") and entry.get("copied_path"):
+                copied_paths.add(Path(entry["copied_path"]))
+                output["output_sync"]["unchanged"] += 1
+            if entry.get("path"):
+                unique_files[entry["path"]] = entry
+            if entry.get("sha256") and entry.get("path") and not entry.get("duplicate"):
+                seen_hashes.setdefault(entry["sha256"], entry)
+
+    for entry in previous_entries["unmatched"]:
+        entry["repo_status"] = repo_info.get("status")
+        entry["repo_changed"] = False
+        output["_unmatched"].append(entry)
+        if entry.get("path"):
+            unique_files[entry["path"]] = entry
+        if entry.get("sha256") and entry.get("path") and not entry.get("duplicate"):
+            seen_hashes.setdefault(entry["sha256"], entry)
+
+    for entry in previous_entries["duplicates"]:
+        output["duplicates"].append(entry)
+
+    for entry in unique_files.values():
+        validation = entry.get("validation")
+        if validate_rules and validation:
+            if validation.get("valid"):
+                output["validation"]["valid_files"] += 1
+            else:
+                output["validation"]["invalid_files"] += 1
+        else:
+            output["validation"]["skipped_files"] += 1
+
+    output["repo_scan_cache"].append(
+        {
+            "repo": repo_info["repo"],
+            "reused": True,
+            "files": len(unique_files),
+            "matches": repo_match_count,
+        }
+    )
+
+
+def copy_rule_file(
+    source_path: Path,
+    destination_path: Path,
+    source_hash: str,
+    previous_hash: str | None,
+) -> str:
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     if destination_path.exists():
         os.chmod(destination_path, stat.S_IREAD | stat.S_IWRITE)
+        if previous_hash == source_hash:
+            return "unchanged"
+        if destination_path.stat().st_size == source_path.stat().st_size:
+            try:
+                if sha256_file(destination_path) == source_hash:
+                    return "unchanged"
+            except OSError:
+                pass
+        status = "updated"
+    else:
+        status = "created"
     shutil.copy2(source_path, destination_path)
     os.chmod(destination_path, stat.S_IREAD | stat.S_IWRITE)
+    return status
 
 
 def make_writable_and_retry(function, path, _exc_info) -> None:
@@ -280,6 +432,37 @@ def reset_rules_dir(rules_dir: Path) -> None:
     rules_dir.mkdir(parents=True, exist_ok=True)
 
 
+def ensure_rules_dir(rules_dir: Path) -> None:
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+
+def remove_stale_rules(rules_dir: Path, expected_paths: set[Path]) -> int:
+    if not rules_dir.exists():
+        return 0
+
+    removed = 0
+    expected = {path.resolve() for path in expected_paths}
+    for path in rules_dir.rglob("*"):
+        if not path.is_file() or path.name == ".gitkeep":
+            continue
+        if path.resolve() in expected:
+            continue
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        path.unlink()
+        removed += 1
+
+    for directory in sorted(
+        (path for path in rules_dir.rglob("*") if path.is_dir()),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+    return removed
+
+
 def progress_interval(total: int) -> int:
     if total <= 2_000:
         return 250
@@ -298,6 +481,10 @@ def build_index(
     yara_bin: str,
     validation_note: str,
     progress: bool,
+    copied_paths: set[Path],
+    previous_copied_hashes: dict[str, str],
+    previous_index: dict,
+    can_reuse_previous_index: bool,
 ) -> dict:
     category_terms = {category: terms_for_category(category) for category in categories}
     output = {
@@ -316,6 +503,13 @@ def build_index(
             "invalid_files": 0,
             "skipped_files": 0,
         },
+        "output_sync": {
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "removed_stale": 0,
+        },
+        "repo_scan_cache": [],
     }
     seen_hashes = {}
 
@@ -327,6 +521,25 @@ def build_index(
         repo_path = Path(repo_info["path"])
         if not repo_path.exists():
             output["errors"].append({**repo_info, "error": "repo path does not exist"})
+            continue
+
+        previous_entries = entries_for_repo(previous_index, repo_info["repo"])
+        has_previous_entries = bool(previous_entries["categories"] or previous_entries["unmatched"])
+        if (
+            can_reuse_previous_index
+            and not repo_info.get("changed", True)
+            and has_previous_entries
+        ):
+            if progress:
+                log(f"[scan] {repo_info['repo']}: unchanged; reused previous index entries")
+            reuse_previous_repo_entries(
+                output,
+                repo_info,
+                previous_entries,
+                copied_paths,
+                seen_hashes,
+                validate_rules,
+            )
             continue
 
         yara_files = iter_yara_files(repo_path)
@@ -382,9 +595,17 @@ def build_index(
                 category_entry = {**base_entry, "matched_terms": matched_terms}
                 if copy_rules and (keep_duplicates or not duplicate_of):
                     copied_path = rules_dir / category / repo_folder / relative_path
-                    copy_rule_file(yara_file, copied_path)
+                    sync_status = copy_rule_file(
+                        yara_file,
+                        copied_path,
+                        file_hash,
+                        previous_copied_hashes.get(str(copied_path)),
+                    )
+                    output["output_sync"][sync_status] += 1
+                    copied_paths.add(copied_path)
                     category_entry["copied_path"] = str(copied_path)
                     category_entry["copied"] = True
+                    category_entry["sync_status"] = sync_status
                 else:
                     category_entry["copied"] = False
 
@@ -403,6 +624,14 @@ def build_index(
             if validate_rules:
                 summary += f", invalid={repo_invalid}"
             log(summary)
+        output["repo_scan_cache"].append(
+            {
+                "repo": repo_info["repo"],
+                "reused": False,
+                "files": len(yara_files),
+                "matches": repo_matched,
+            }
+        )
 
     return output
 
@@ -433,6 +662,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", default="yara_rule_index.json", help="JSON output path")
     parser.add_argument("--no-copy", action="store_true", help="Only write JSON; do not copy matched rules")
+    parser.add_argument("--clean-output", action="store_true", help="Delete and rebuild categorized rules instead of syncing")
     parser.add_argument("--keep-duplicates", action="store_true", help="Copy duplicate rule files too")
     parser.add_argument(
         "--validate",
@@ -476,6 +706,13 @@ def main() -> int:
         validation_note = "YARA validation disabled by --no-validate."
     elif not yara_path:
         validation_note = "YARA CLI not found on PATH; syntax validation skipped."
+    previous_index = load_previous_index(output_path)
+    can_reuse_previous_index = (
+        bool(previous_index)
+        and not args.clean_output
+        and previous_index_matches_categories(previous_index, categories)
+        and previous_index.get("validation", {}).get("enabled") == validate_rules
+    )
 
     if progress:
         log("[start] YARA rule automation")
@@ -486,6 +723,10 @@ def main() -> int:
         log(f"[config] JSON index: {output_path}")
         log(f"[config] duplicate copying: {'enabled' if args.keep_duplicates else 'disabled'}")
         log(f"[config] {validation_note}")
+        if can_reuse_previous_index:
+            log("[config] previous index reuse: enabled for unchanged repos")
+        elif previous_index:
+            log("[config] previous index reuse: disabled due to changed config or validation mode")
 
     repo_results = []
     for index, repo_url in enumerate(repos, start=1):
@@ -510,13 +751,23 @@ def main() -> int:
                 log(f"[repo {index}/{len(repos)}] error: {exc}")
 
     copy_rules = not args.no_copy
+    previous_copied_hashes = {}
     if copy_rules:
-        if progress:
-            log(f"[output] refreshing categorized rules in {rules_dir}")
-        reset_rules_dir(rules_dir)
+        if args.clean_output:
+            if progress:
+                log(f"[output] deleting and rebuilding categorized rules in {rules_dir}")
+            reset_rules_dir(rules_dir)
+        else:
+            if progress:
+                log(f"[output] syncing categorized rules in {rules_dir}")
+            ensure_rules_dir(rules_dir)
+            previous_copied_hashes = load_previous_copied_hashes(previous_index)
+            if progress and previous_copied_hashes:
+                log(f"[output] loaded {len(previous_copied_hashes)} previous copied file hashes")
     elif progress:
         log("[output] copy disabled; JSON index only")
 
+    copied_paths = set()
     index = build_index(
         repo_results,
         categories,
@@ -527,7 +778,19 @@ def main() -> int:
         str(yara_path or args.yara_bin),
         validation_note,
         progress,
+        copied_paths,
+        previous_copied_hashes,
+        previous_index,
+        can_reuse_previous_index,
     )
+    if copy_rules and not args.clean_output:
+        scanned_repos = [item for item in index["repo_scan_cache"] if not item.get("reused")]
+        if scanned_repos:
+            if progress:
+                log("[output] removing stale categorized rule files")
+            index["output_sync"]["removed_stale"] = remove_stale_rules(rules_dir, copied_paths)
+        elif progress:
+            log("[output] all repos reused; skipped stale file scan")
     if progress:
         log(f"[output] writing JSON index to {output_path}")
     write_json(index, output_path, args.compact_json)
@@ -551,6 +814,17 @@ def main() -> int:
     print(f"Repositories processed: {len(repo_results)}")
     print(f"Category matches: {matched_count}")
     print(f"Copied category files: {copied_count}")
+    if copy_rules:
+        print(
+            "Output sync: "
+            f"created={index['output_sync']['created']}, "
+            f"updated={index['output_sync']['updated']}, "
+            f"unchanged={index['output_sync']['unchanged']}, "
+            f"removed_stale={index['output_sync']['removed_stale']}"
+        )
+    reused_repos = sum(1 for item in index["repo_scan_cache"] if item.get("reused"))
+    if reused_repos:
+        print(f"Unchanged repos reused from previous index: {reused_repos}")
     print(f"Duplicate YARA files: {len(index['duplicates'])}")
     print(f"Unmatched YARA files: {len(index['_unmatched'])}")
     print(index["validation"]["note"])

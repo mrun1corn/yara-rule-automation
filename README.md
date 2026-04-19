@@ -16,7 +16,7 @@ The script will:
 
 - Clone new repositories from `repos.txt` into `repos/`
 - Pull updates for existing repositories
-- Rebuild categorized rule files under `yara-rules/categories/`
+- Sync categorized rule files under `yara-rules/categories/`
 - Write `yara_rule_index.json`
 - Detect duplicate YARA files by SHA-256
 - Validate YARA syntax automatically if the `yara` CLI is installed
@@ -40,6 +40,16 @@ Before pushing from a local machine, install Git LFS once:
 ```powershell
 git lfs install
 ```
+
+By default, generated rule files are synced in place. The script uses the
+previous `yara_rule_index.json` to skip unchanged category copies quickly,
+overwrites changed files, copies new files, and removes stale files. Use
+`--clean-output` only when you want to delete and rebuild the category output
+from scratch.
+
+When a source repository's Git HEAD has not changed, the script reuses that
+repo's previous index entries instead of scanning every YARA file again. This
+keeps repeat workflow runs much faster after the first generated index exists.
 
 ## Inputs
 
