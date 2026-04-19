@@ -1,0 +1,89 @@
+{
+  "sql_injection": [
+    "sql injection",
+    "sqli",
+    "sql-injection",
+    "sql_injection"
+  ],
+  "scripting_attacks": [
+    "script",
+    "scripting",
+    "powershell",
+    "javascript",
+    "jscript",
+    "vbscript",
+    "vbs",
+    "macro",
+    "wscript",
+    "cscript"
+  ],
+  "brute_force": [
+    "brute force",
+    "bruteforce",
+    "brute-force",
+    "password spraying"
+  ],
+  "credential_theft": [
+    "credential",
+    "credentials",
+    "creds",
+    "password",
+    "passwd",
+    "stealer",
+    "infostealer",
+    "keylogger"
+  ],
+  "phishing": [
+    "phish",
+    "phishing"
+  ],
+  "behavioral": [
+    "behavior",
+    "behaviour",
+    "behavioral",
+    "behavioural"
+  ],
+  "rootkit": [
+    "rootkit",
+    "bootkit"
+  ],
+  "malware": [
+    "malware",
+    "malicious"
+  ],
+  "trojans": [
+    "trojan",
+    "trojans",
+    "rat",
+    "backdoor",
+    "remote access"
+  ],
+  "ransomware": [
+    "ransom",
+    "ransomware",
+    "locker",
+    "encryptor",
+    "cryptolocker"
+  ],
+  "spyware": [
+    "spyware",
+    "spy",
+    "surveillance"
+  ],
+  "worms": [
+    "worm",
+    "worms"
+  ],
+  "autorun": [
+    "autorun",
+    "auto run",
+    "startup",
+    "persistence"
+  ],
+  "security": [
+    "security",
+    "secops",
+    "defense",
+    "defence"
+  ]
+}

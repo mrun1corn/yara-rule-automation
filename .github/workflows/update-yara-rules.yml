@@ -46,7 +46,7 @@ jobs:
           sed 's/^/  /' repos.txt
           echo
           echo "Categories:"
-          sed 's/^/  /' category.txt
+          cat categories.json | jq .
 
       - name: Generate categorized YARA rules
         run: python yara_rule_automation.py

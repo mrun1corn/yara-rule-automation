@@ -33,48 +33,6 @@ IGNORED_DIRS = {
     "venv",
 }
 
-CATEGORY_ALIASES = {
-    "sql_injection": ["sql injection", "sqli", "sql-injection", "sql_injection"],
-    "scripting_attacks": [
-        "script",
-        "scripting",
-        "powershell",
-        "javascript",
-        "jscript",
-        "vbscript",
-        "vbs",
-        "macro",
-        "wscript",
-        "cscript",
-    ],
-    "brute_force": ["brute force", "bruteforce", "brute-force", "password spraying"],
-    "credential_theft": [
-        "credential",
-        "credentials",
-        "creds",
-        "password",
-        "passwd",
-        "stealer",
-        "infostealer",
-        "keylogger",
-    ],
-    "phishing": ["phish", "phishing"],
-    "behavioral": ["behavior", "behaviour", "behavioral", "behavioural"],
-    "rootkit": ["rootkit", "bootkit"],
-    "malware": ["malware", "malicious"],
-    "trojans": ["trojan", "trojans", "rat", "backdoor", "remote access"],
-    "ransomware": ["ransom", "ransomware", "locker", "encryptor", "cryptolocker"],
-    "spyware": ["spyware", "spy", "surveillance"],
-    "worms": ["worm", "worms"],
-    "autorun": ["autorun", "auto run", "startup", "persistence"],
-    "security": ["security", "secops", "defense", "defence"],
-}
-
-RULE_TAG_RE = re.compile(r"(?im)^\s*rule\s+[A-Za-z0-9_]+\s*:\s*([^{]+)\{")
-META_BLOCK_RE = re.compile(r"(?ims)^\s*meta\s*:\s*(.*?)(?:^\s*(?:strings|condition)\s*:)")
-COMMENT_RE = re.compile(r"(?m)//.*?$|/\*.*?\*/", re.DOTALL)
-
-
 def read_list(path: Path) -> list[str]:
     """Read a newline-delimited list, ignoring blanks and # comments."""
     items = []
@@ -83,6 +41,14 @@ def read_list(path: Path) -> list[str]:
         if stripped and not stripped.startswith("#"):
             items.append(stripped)
     return items
+
+
+def read_categories(path: Path) -> dict[str, list[str]]:
+    """Read categories and their aliases from a JSON file."""
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def normalize_text(value: str) -> str:
@@ -95,10 +61,15 @@ def compact_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
-def terms_for_category(category: str) -> list[str]:
+RULE_TAG_RE = re.compile(r"(?im)^\s*rule\s+[A-Za-z0-9_]+\s*:\s*([^{]+)\{")
+META_BLOCK_RE = re.compile(r"(?ims)^\s*meta\s*:\s*(.*?)(?:^\s*(?:strings|condition)\s*:)")
+COMMENT_RE = re.compile(r"(?m)//.*?$|/\*.*?\*/", re.DOTALL)
+
+
+def terms_for_category(category: str, category_data: dict[str, list[str]]) -> list[str]:
     terms = {category, normalize_text(category)}
-    terms.update(CATEGORY_ALIASES.get(category, []))
-    terms.update(CATEGORY_ALIASES.get(normalize_text(category).replace(" ", "_"), []))
+    terms.update(category_data.get(category, []))
+    terms.update(category_data.get(normalize_text(category).replace(" ", "_"), []))
     return sorted({term.strip().lower() for term in terms if term.strip()})
 
 
@@ -473,7 +444,7 @@ def progress_interval(total: int) -> int:
 
 def build_index(
     repo_results: list[dict],
-    categories: list[str],
+    category_data: dict[str, list[str]],
     rules_dir: Path,
     copy_rules: bool,
     keep_duplicates: bool,
@@ -486,7 +457,11 @@ def build_index(
     previous_index: dict,
     can_reuse_previous_index: bool,
 ) -> dict:
-    category_terms = {category: terms_for_category(category) for category in categories}
+    categories = sorted(category_data.keys())
+    category_terms = {
+        category: terms_for_category(category, category_data)
+        for category in categories
+    }
     output = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "repo_count": len(repo_results),
@@ -653,7 +628,7 @@ def parse_args() -> argparse.Namespace:
         description="Clone/update YARA repos and write categorized YARA files plus a JSON index."
     )
     parser.add_argument("--repos", default="repos.txt", help="Path to repos.txt")
-    parser.add_argument("--categories", default="category.txt", help="Path to category.txt")
+    parser.add_argument("--categories", default="categories.json", help="Path to categories.json")
     parser.add_argument("--repo-dir", default="repos", help="Directory for cloned repos")
     parser.add_argument(
         "--rules-dir",
@@ -687,14 +662,15 @@ def main() -> int:
     output_path = Path(args.output)
 
     repos = read_list(repos_path)
-    categories = read_list(categories_path)
+    category_data = read_categories(categories_path)
     progress = not args.quiet
 
     if not repos:
         raise SystemExit(f"No repositories found in {repos_path}")
-    if not categories:
+    if not category_data:
         raise SystemExit(f"No categories found in {categories_path}")
 
+    categories = sorted(category_data.keys())
     yara_path = shutil.which(args.yara_bin)
     if args.validate and not yara_path:
         raise SystemExit(
@@ -770,7 +746,7 @@ def main() -> int:
     copied_paths = set()
     index = build_index(
         repo_results,
-        categories,
+        category_data,
         rules_dir,
         copy_rules,
         args.keep_duplicates,

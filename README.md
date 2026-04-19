@@ -1,7 +1,7 @@
 # YARA Rule Automation
 
 This project clones the GitHub repositories listed in `repos.txt`, scans YARA
-files, groups matched rules by the categories in `category.txt`, detects exact
+files, groups matched rules by the categories in `categories.json`, detects exact
 duplicates, and writes a JSON index.
 
 ## Local Usage
@@ -53,7 +53,5 @@ keeps repeat workflow runs much faster after the first generated index exists.
 
 ## Inputs
 
-- `repos.txt`: one GitHub repository URL per line
-- `category.txt`: one category name per line
-
-Blank lines and lines starting with `#` are ignored.
+- `repos.txt`: one GitHub repository URL per line (blank lines and `#` comments ignored)
+- `categories.json`: a JSON dictionary where keys are category names and values are lists of alias terms to match
