@@ -21,17 +21,25 @@ The script will:
 - Detect duplicate YARA files by SHA-256
 - Validate YARA syntax automatically if the `yara` CLI is installed
 
-Generated files are ignored by Git so large rule outputs are not committed by
-accident.
+The cloned source repositories under `repos/` are ignored by Git. Generated
+rules under `yara-rules/` and `yara_rule_index.json` can be committed; the JSON
+index is pretty-printed and tracked with Git LFS because it can grow past
+GitHub's normal file size limit.
 
 ## GitHub Actions
 
 Use the **Update YARA Rules** workflow from the GitHub Actions tab.
 
 The workflow runs on demand with `workflow_dispatch`, generates the categorized
-rules, writes a run summary, and uploads the generated `yara-rules/` directory
-plus `yara_rule_index.json` as a downloadable artifact named
-`yara-rules-output`.
+rules, writes a run summary, uploads the generated `yara-rules/` directory plus
+`yara_rule_index.json` as a downloadable artifact named `yara-rules-output`, and
+commits changed generated files back to the repository.
+
+Before pushing from a local machine, install Git LFS once:
+
+```powershell
+git lfs install
+```
 
 ## Inputs
 
