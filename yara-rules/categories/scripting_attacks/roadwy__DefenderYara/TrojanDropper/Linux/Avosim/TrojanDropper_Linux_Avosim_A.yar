@@ -1,0 +1,28 @@
+
+rule TrojanDropper_Linux_Avosim_A{
+	meta:
+		description = "TrojanDropper:Linux/Avosim.A,SIGNATURE_TYPE_MACROHSTR_EXT,05 00 05 00 06 00 00 "
+		
+	strings :
+		$a_01_0 = {2e 76 62 73 22 } //1 .vbs"
+		$a_01_1 = {2e 52 75 6e 20 63 6d 64 } //1 .Run cmd
+		$a_01_2 = {22 73 63 68 74 61 73 6b 73 20 2f 63 72 65 61 74 65 20 2f 46 20 2f 73 63 20 6d 69 6e 75 74 65 20 2f 6d 6f } //1 "schtasks /create /F /sc minute /mo
+		$a_01_3 = {3d 20 43 72 65 61 74 65 4f 62 6a 65 63 74 28 22 57 53 63 72 69 70 74 2e 53 68 65 6c 6c 22 29 } //1 = CreateObject("WScript.Shell")
+		$a_01_4 = {22 70 6f 77 65 72 73 68 65 6c 6c 20 } //1 "powershell 
+		$a_01_5 = {68 74 74 70 3a 2f 2f 77 77 77 2e 6e 69 73 73 61 79 2e 63 6f 2e 6a 70 2f 6b 6f 6a 69 6e 2f 73 68 6f 68 69 6e } //-100 http://www.nissay.co.jp/kojin/shohin
+	condition:
+		((#a_01_0  & 1)*1+(#a_01_1  & 1)*1+(#a_01_2  & 1)*1+(#a_01_3  & 1)*1+(#a_01_4  & 1)*1+(#a_01_5  & 1)*-100) >=5
+ 
+}
+rule TrojanDropper_Linux_Avosim_A_2{
+	meta:
+		description = "TrojanDropper:Linux/Avosim.A,SIGNATURE_TYPE_MACROHSTR_EXT,03 00 03 00 03 00 00 "
+		
+	strings :
+		$a_01_0 = {75 70 64 70 61 74 68 20 3d 20 65 6e 76 73 74 72 20 26 20 66 64 6e 61 6d 65 20 26 20 22 5c 75 70 64 2e 76 62 73 22 } //1 updpath = envstr & fdname & "\upd.vbs"
+		$a_01_1 = {64 6e 70 61 74 68 20 3d 20 65 6e 76 73 74 72 20 26 20 66 64 6e 61 6d 65 20 26 20 22 5c 64 6e 2e 70 73 31 22 } //1 dnpath = envstr & fdname & "\dn.ps1"
+		$a_01_2 = {2e 52 75 6e 20 22 73 63 68 74 61 73 6b 73 20 2f 63 72 65 61 74 65 20 2f 46 20 2f 73 63 20 6d 69 6e 75 74 65 20 2f 6d 6f 20 22 20 26 20 74 73 6b 6d 69 6e 20 26 20 22 20 2f 74 6e 20 22 20 26 20 43 68 72 28 33 34 29 20 26 20 74 73 6b 6e 61 6d 65 20 26 20 43 68 72 28 33 34 29 20 26 20 22 20 2f 74 72 20 22 20 5f } //1 .Run "schtasks /create /F /sc minute /mo " & tskmin & " /tn " & Chr(34) & tskname & Chr(34) & " /tr " _
+	condition:
+		((#a_01_0  & 1)*1+(#a_01_1  & 1)*1+(#a_01_2  & 1)*1) >=3
+ 
+}
