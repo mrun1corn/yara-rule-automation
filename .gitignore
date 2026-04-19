@@ -3,12 +3,7 @@ repos/*
 !repos/.gitkeep
 vendor/
 
-# Generated YARA outputs
-yara-rules/categories/*
-!yara-rules/.gitkeep
-!yara-rules/categories/
-!yara-rules/categories/.gitkeep
-yara_rule_index.json
+# Local temporary files
 *.log
 *.tmp
 *.bak

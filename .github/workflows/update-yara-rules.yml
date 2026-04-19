@@ -3,6 +3,9 @@ name: Update YARA Rules
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   update-yara-rules:
     name: Build categorized YARA rules
@@ -12,11 +15,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Restore cloned repository cache
+        uses: actions/cache@v4
+        with:
+          path: repos
+          key: yara-source-repos-${{ runner.os }}-${{ hashFiles('repos.txt') }}
+          restore-keys: |
+            yara-source-repos-${{ runner.os }}-
 
       - name: Show input files
         run: |
@@ -55,6 +68,18 @@ jobs:
               for category, count in category_counts.items():
                   summary.write(f"- `{category}`: {count}\n")
           PY
+
+      - name: Commit generated rule updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add yara-rules yara_rule_index.json
+          if git diff --cached --quiet; then
+            echo "No generated rule changes to commit."
+          else
+            git commit -m "Update generated YARA rules"
+            git push
+          fi
 
       - name: Upload generated rules artifact
         uses: actions/upload-artifact@v4
