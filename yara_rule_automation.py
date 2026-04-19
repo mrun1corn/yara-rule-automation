@@ -407,10 +407,14 @@ def build_index(
     return output
 
 
-def write_json(index: dict, output_path: Path) -> None:
+def write_json(index: dict, output_path: Path, pretty_json: bool) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if pretty_json:
+        payload = json.dumps(index, indent=2, sort_keys=True)
+    else:
+        payload = json.dumps(index, separators=(",", ":"), sort_keys=True)
     output_path.write_text(
-        json.dumps(index, indent=2, sort_keys=True) + "\n",
+        payload + "\n",
         encoding="utf-8",
     )
 
@@ -438,6 +442,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-validate", action="store_true", help="Disable automatic YARA validation")
     parser.add_argument("--yara-bin", default="yara", help="YARA executable used for validation")
     parser.add_argument("--skip-pull", action="store_true", help="Do not pull existing repos")
+    parser.add_argument("--pretty-json", action="store_true", help="Write indented JSON instead of compact JSON")
     parser.add_argument("--quiet", action="store_true", help="Only print the final summary")
     parser.add_argument("--verbose", action="store_true", help="Also print the exact git commands")
     return parser.parse_args()
@@ -525,7 +530,7 @@ def main() -> int:
     )
     if progress:
         log(f"[output] writing JSON index to {output_path}")
-    write_json(index, output_path)
+    write_json(index, output_path, args.pretty_json)
 
     matched_count = sum(len(items) for items in index["categories"].values())
     copied_count = sum(
