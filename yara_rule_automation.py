@@ -597,9 +597,17 @@ def build_index(
 
             repo_matched += len(matches)
             repo_folder = repo_info["repo"].replace("/", "__")
+            
+            # Decide if this file is eligible for copying
+            # 1. We must be in 'copy' mode
+            # 2. It must not be a duplicate (unless keep_duplicates is True)
+            # 3. If validation is enabled, it MUST be a valid rule
+            is_valid = not validate_rules or base_entry["validation"]["valid"]
+            should_copy = copy_rules and (keep_duplicates or not duplicate_of) and is_valid
+
             for category, matched_terms in matches.items():
                 category_entry = {**base_entry, "matched_terms": matched_terms}
-                if copy_rules and (keep_duplicates or not duplicate_of):
+                if should_copy:
                     copied_path = rules_dir / category / repo_folder / relative_path
                     sync_status = copy_rule_file(
                         yara_file,
@@ -614,10 +622,10 @@ def build_index(
                     category_entry["sync_status"] = sync_status
                 else:
                     category_entry["copied"] = False
-
-                output["categories"][category].append(
-                    category_entry
-                )
+                    if not is_valid:
+                        category_entry["copy_skip_reason"] = "invalid_syntax"
+                    elif duplicate_of and not keep_duplicates:
+                        category_entry["copy_skip_reason"] = "duplicate"
 
             if progress and index % interval == 0:
                 log(f"[scan] {repo_info['repo']}: processed {index}/{len(yara_files)} files")
