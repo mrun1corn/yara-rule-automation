@@ -11,6 +11,10 @@ import re
 import shutil
 import stat
 import subprocess
+try:
+    import yara
+except ImportError:
+    yara = None
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -188,15 +192,42 @@ def sha256_file(file_path: Path) -> str:
 
 
 def validate_yara_file(file_path: Path, yara_bin: str) -> dict:
+    if yara is not None:
+        try:
+            # yara-python is the preferred way to validate rules
+            yara.compile(filepath=str(file_path))
+            return {
+                "valid": True,
+                "returncode": 0,
+                "message": "yara-python: valid",
+            }
+        except yara.SyntaxError as exc:
+            return {
+                "valid": False,
+                "returncode": 1,
+                "message": str(exc),
+            }
+        except Exception as exc:
+            # Fallback to CLI if yara-python has an unexpected error (e.g. file access)
+            return {
+                "valid": False,
+                "returncode": 1,
+                "message": f"yara-python error: {exc}",
+            }
+
+    # Fallback to YARA CLI if yara-python is not installed
+    # We run from the file's directory so relative 'include' statements work.
+    # We use os.devnull as a dummy target to avoid scanning the rule file itself.
     completed = subprocess.run(
-        [yara_bin, str(file_path), str(file_path)],
+        [yara_bin, "-w", file_path.name, os.devnull],
+        cwd=file_path.parent,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     return {
-        "valid": completed.returncode in {0, 1},
+        "valid": completed.returncode == 0,
         "returncode": completed.returncode,
         "message": (completed.stderr or completed.stdout).strip(),
     }
@@ -672,16 +703,22 @@ def main() -> int:
 
     categories = sorted(category_data.keys())
     yara_path = shutil.which(args.yara_bin)
-    if args.validate and not yara_path:
+    if args.validate and not yara_path and yara is None:
         raise SystemExit(
-            f"YARA validator not found: {args.yara_bin}. Install YARA or pass --yara-bin."
+            f"YARA validator not found: {args.yara_bin} (and yara-python is not installed). Install YARA or pass --yara-bin."
         )
-    validate_rules = bool(yara_path) and not args.no_validate
-    validation_note = "YARA CLI found; syntax validation enabled."
+
+    if yara is not None:
+        validate_rules = not args.no_validate
+        validation_note = "yara-python found; syntax validation enabled."
+    else:
+        validate_rules = bool(yara_path) and not args.no_validate
+        validation_note = "YARA CLI found; syntax validation enabled."
+
     if args.no_validate:
         validation_note = "YARA validation disabled by --no-validate."
-    elif not yara_path:
-        validation_note = "YARA CLI not found on PATH; syntax validation skipped."
+    elif yara is None and not yara_path:
+        validation_note = "YARA CLI/yara-python not found; syntax validation skipped."
     previous_index = load_previous_index(output_path)
     can_reuse_previous_index = (
         bool(previous_index)
