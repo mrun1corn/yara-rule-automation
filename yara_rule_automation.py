@@ -626,6 +626,8 @@ def build_index(
                         category_entry["copy_skip_reason"] = "invalid_syntax"
                     elif duplicate_of and not keep_duplicates:
                         category_entry["copy_skip_reason"] = "duplicate"
+                output["categories"][category].append(category_entry)
+
 
             if progress and index % interval == 0:
                 log(f"[scan] {repo_info['repo']}: processed {index}/{len(yara_files)} files")
@@ -691,7 +693,9 @@ def build_category_index(index: dict) -> dict:
                 else entry.get("path")
             )
             if raw:
-                paths.append(str(Path(raw).resolve()))
+                # Use forward-slash relative paths so the JSON is identical
+                # whether generated locally (Windows) or on a CI runner (Linux).
+                paths.append(Path(raw).as_posix())
         if paths:
             categories[category] = sorted(set(paths))
     return {
