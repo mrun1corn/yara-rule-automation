@@ -724,7 +724,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--validate",
         action="store_true",
-        help="Require YARA validation and fail if the YARA CLI is not available",
+        help="No-op; validation is enabled by default. Kept for backwards compatibility.",
     )
     parser.add_argument("--no-validate", action="store_true", help="Disable automatic YARA validation")
     parser.add_argument("--yara-bin", default="yara", help="YARA executable used for validation")
@@ -755,22 +755,22 @@ def main() -> int:
 
     categories = sorted(category_data.keys())
     yara_path = shutil.which(args.yara_bin)
-    if args.validate and not yara_path and yara is None:
-        raise SystemExit(
-            f"YARA validator not found: {args.yara_bin} (and yara-python is not installed). Install YARA or pass --yara-bin."
-        )
-
-    if yara is not None:
-        validate_rules = not args.no_validate
-        validation_note = "yara-python found; syntax validation enabled."
-    else:
-        validate_rules = bool(yara_path) and not args.no_validate
-        validation_note = "YARA CLI found; syntax validation enabled."
 
     if args.no_validate:
+        validate_rules = False
         validation_note = "YARA validation disabled by --no-validate."
-    elif yara is None and not yara_path:
-        validation_note = "YARA CLI/yara-python not found; syntax validation skipped."
+    elif yara is not None:
+        validate_rules = True
+        validation_note = "yara-python found; syntax validation enabled."
+    elif yara_path:
+        validate_rules = True
+        validation_note = "YARA CLI found; syntax validation enabled."
+    else:
+        raise SystemExit(
+            f"YARA validator not found: '{args.yara_bin}' is not on PATH and yara-python is not installed.\n"
+            "Install yara-python:  pip install yara-python\n"
+            "Or pass --no-validate to skip syntax validation."
+        )
     previous_index = load_previous_index(output_path)
     can_reuse_previous_index = (
         bool(previous_index)
