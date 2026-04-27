@@ -662,6 +662,44 @@ def write_json(index: dict, output_path: Path, compact_json: bool) -> None:
     )
 
 
+def build_category_index(index: dict) -> dict:
+    """Build a lightweight {category: [full_absolute_path, ...]} index from the main index.
+
+    Only rules that passed validation (validation.valid == True) are included.
+    When validation was not run (validation key absent or skipped), the entry is
+    included so the index is not empty when --no-validate is used.
+
+    For each matched entry the *copied_path* is preferred (the organised output
+    location under yara-rules/categories/).  When a file was not copied (e.g.
+    --no-copy mode) the original source *path* is used instead.
+
+    All paths are resolved to their full absolute form so the output is
+    unambiguous regardless of how the script was invoked.
+    """
+    categories: dict[str, list[str]] = {}
+    for category, entries in sorted(index["categories"].items()):
+        paths: list[str] = []
+        for entry in entries:
+            # Skip rules that explicitly failed validation.
+            validation = entry.get("validation")
+            if validation is not None and not validation.get("valid"):
+                continue
+
+            raw = (
+                entry["copied_path"]
+                if entry.get("copied") and entry.get("copied_path")
+                else entry.get("path")
+            )
+            if raw:
+                paths.append(str(Path(raw).resolve()))
+        if paths:
+            categories[category] = sorted(set(paths))
+    return {
+        "generated_at": index["generated_at"],
+        "categories": categories,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Clone/update YARA repos and write categorized YARA files plus a JSON index."
@@ -675,6 +713,11 @@ def parse_args() -> argparse.Namespace:
         help="Directory for categorized copied YARA files",
     )
     parser.add_argument("--output", default="yara_rule_index.json", help="JSON output path")
+    parser.add_argument(
+        "--category-index",
+        default="yara_category_index.json",
+        help="Path for the lightweight category→paths JSON index (default: yara_category_index.json)",
+    )
     parser.add_argument("--no-copy", action="store_true", help="Only write JSON; do not copy matched rules")
     parser.add_argument("--clean-output", action="store_true", help="Delete and rebuild categorized rules instead of syncing")
     parser.add_argument("--keep-duplicates", action="store_true", help="Copy duplicate rule files too")
@@ -699,6 +742,7 @@ def main() -> int:
     repo_dir = Path(args.repo_dir)
     rules_dir = Path(args.rules_dir)
     output_path = Path(args.output)
+    category_index_path = Path(args.category_index)
 
     repos = read_list(repos_path)
     category_data = read_categories(categories_path)
@@ -816,6 +860,11 @@ def main() -> int:
         log(f"[output] writing JSON index to {output_path}")
     write_json(index, output_path, args.compact_json)
 
+    if progress:
+        log(f"[output] writing category index to {category_index_path}")
+    category_index = build_category_index(index)
+    write_json(category_index, category_index_path, args.compact_json)
+
     matched_count = sum(len(items) for items in index["categories"].values())
     copied_count = sum(
         1 for entries in index["categories"].values() for entry in entries if entry.get("copied")
@@ -830,6 +879,7 @@ def main() -> int:
     print("Summary")
     print("-------")
     print(f"Wrote {output_path}")
+    print(f"Wrote {category_index_path}")
     if copy_rules:
         print(f"Wrote categorized YARA files under {rules_dir}")
     print(f"Repositories processed: {len(repo_results)}")

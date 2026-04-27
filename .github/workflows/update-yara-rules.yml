@@ -34,6 +34,7 @@ jobs:
         run: |
           git lfs install
           git lfs track "yara_rule_index.json"
+          git lfs track "yara_category_index.json"
           git lfs track "*.zip"
           git lfs track "*.tar.gz"
           git lfs track "*.7z"
@@ -65,6 +66,7 @@ jobs:
           from pathlib import Path
 
           data = json.loads(Path("yara_rule_index.json").read_text(encoding="utf-8"))
+          cat_data = json.loads(Path("yara_category_index.json").read_text(encoding="utf-8"))
           category_counts = {
               category: len(entries)
               for category, entries in sorted(data["categories"].items())
@@ -82,6 +84,11 @@ jobs:
               summary.write("## Category Counts\n\n")
               for category, count in category_counts.items():
                   summary.write(f"- `{category}`: {count}\n")
+              summary.write("\n## Category Index (`yara_category_index.json`)\n\n")
+              summary.write("| Category | Rule Files |\n")
+              summary.write("|----------|------------|\n")
+              for category, paths in sorted(cat_data["categories"].items()):
+                  summary.write(f"| `{category}` | {len(paths)} |\n")
           PY
 
       - name: Upload generated rules artifact
@@ -91,6 +98,7 @@ jobs:
           path: |
             yara-rules/
             yara_rule_index.json
+            yara_category_index.json
           if-no-files-found: error
           retention-days: 14
 
@@ -113,7 +121,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .gitattributes yara-rules yara_rule_index.json
+          git add .gitattributes yara-rules yara_rule_index.json yara_category_index.json
           if git diff --cached --quiet; then
             echo "No generated rule changes to commit."
           else
